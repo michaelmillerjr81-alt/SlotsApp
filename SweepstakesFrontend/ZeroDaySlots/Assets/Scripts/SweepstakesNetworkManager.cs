@@ -110,7 +110,7 @@ public class SweepstakesNetworkManager : MonoBehaviour
             }
             else
             {
-                Debug.LogError($"[NETWORK ERROR] {request.error}");
+                Debug.LogError($"[NETWORK ERROR] {request.error} | Body: {request.downloadHandler?.text} | ApiKey sent: '{PlatformManager.Instance.apiKey}' | LoggedIn: {PlatformManager.Instance.IsLoggedIn}");
             }
         }
     }

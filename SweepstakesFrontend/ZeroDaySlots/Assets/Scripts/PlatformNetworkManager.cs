@@ -101,15 +101,21 @@ public class PlatformNetworkManager : MonoBehaviour
     private IEnumerator GetRequest(string endpoint, bool requiresAuth, Action<string> onSuccess)
     {
         string url = PlatformManager.Instance.serverBaseUrl + endpoint;
+        Debug.Log($"[PLATFORM NET] GET {url} | auth={requiresAuth} | loggedIn={PlatformManager.Instance.IsLoggedIn}");
         using (UnityWebRequest req = UnityWebRequest.Get(url))
         {
             AddHeaders(req, requiresAuth);
             yield return req.SendWebRequest();
 
             if (req.result == UnityWebRequest.Result.Success)
+            {
                 onSuccess(req.downloadHandler.text);
+            }
             else
-                Debug.LogError($"[PLATFORM NET] GET {endpoint} failed: {req.error}");
+            {
+                Debug.LogError($"[PLATFORM NET] GET {endpoint} failed: {req.error} | Body: {req.downloadHandler?.text}");
+                onSuccess($"{{\"success\":false,\"error\":\"{req.error}\"}}");
+            }
         }
     }
 

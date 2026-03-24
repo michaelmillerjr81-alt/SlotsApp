@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using TMPro;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 
 /// <summary>
 /// Builds the LoginScene from scratch.
@@ -47,9 +48,20 @@ public static class CreateLoginScene
         services.AddComponent<PlatformNetworkManager>();
 
         // ── Event System ──────────────────────────────────────────────────
+        // ── Camera ────────────────────────────────────────────────────────
+        var camGO = new GameObject("Main Camera");
+        camGO.tag = "MainCamera";
+        var cam = camGO.AddComponent<Camera>();
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = ColBg;
+        cam.orthographic = true;
+        cam.depth = -1;
+        camGO.AddComponent<AudioListener>();
+
+        // ── Event System ──────────────────────────────────────────────────
         var es = new GameObject("EventSystem");
         es.AddComponent<EventSystem>();
-        es.AddComponent<StandaloneInputModule>();
+        es.AddComponent<InputSystemUIInputModule>();
 
         // ── Canvas ────────────────────────────────────────────────────────
         var canvasGO = new GameObject("Canvas");
@@ -90,7 +102,7 @@ public static class CreateLoginScene
 
         // Separator
         var sepTMP = AddTMP(panel, "Separator",
-                            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                            "- - - - - - - - - - - - - - - -",
                             font, 10f, ColSepLine, FontStyles.Normal, TextAlignmentOptions.Center);
         SetRect(sepTMP.rectTransform, 0f, y, 440f, 16f);  y -= 42f;
 

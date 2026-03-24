@@ -6,6 +6,7 @@ using UnityEditor.SceneManagement;
 using UnityEditor.Events;
 using TMPro;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 
 /// <summary>
 /// Builds the ZeroDaySlots scene from scratch, auto-wiring every component reference.
@@ -57,10 +58,20 @@ public static class CreateSlotsScene
         var grid    = gcGO.AddComponent<ZeroDayGridManager>();
         net.lobbySceneName = "LobbyScene";
 
+        // ── Camera ────────────────────────────────────────────────────────
+        var camGO = new GameObject("Main Camera");
+        camGO.tag = "MainCamera";
+        var cam = camGO.AddComponent<Camera>();
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = ColBg;
+        cam.orthographic = true;
+        cam.depth = -1;
+        camGO.AddComponent<AudioListener>();
+
         // ── Event System ──────────────────────────────────────────────────
         var es = new GameObject("EventSystem");
         es.AddComponent<EventSystem>();
-        es.AddComponent<StandaloneInputModule>();
+        es.AddComponent<InputSystemUIInputModule>();
 
         // ── Canvas ────────────────────────────────────────────────────────
         var canvasGO = new GameObject("Canvas");

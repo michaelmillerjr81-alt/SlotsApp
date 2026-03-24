@@ -9,26 +9,13 @@ using UnityEngine;
  */
 public class PlatformManager : MonoBehaviour
 {
-    private static PlatformManager _instance;
-    public static PlatformManager Instance
-    {
-        get
-        {
-            if (_instance == null)
-            {
-                var go = new GameObject("PlatformServices");
-                _instance = go.AddComponent<PlatformManager>();
-                DontDestroyOnLoad(go);
-            }
-            return _instance;
-        }
-    }
+    public static PlatformManager Instance { get; private set; }
 
     // Set these in the Inspector or via code before making API calls
     [Tooltip("Base URL of the backend server (no trailing slash)")]
     public string serverBaseUrl = "http://localhost:3000";
     [Tooltip("Must match the API_KEY environment variable on the server")]
-    public string apiKey = "CHANGE_ME";
+    public string apiKey = "zeroday123";
 
     // Session data (populated after login/register)
     public string JwtToken   { get; set; }
@@ -40,12 +27,12 @@ public class PlatformManager : MonoBehaviour
 
     private void Awake()
     {
-        if (_instance != null && _instance != this)
+        if (Instance != null && Instance != this)
         {
             Destroy(gameObject);
             return;
         }
-        _instance = this;
+        Instance = this;
         DontDestroyOnLoad(gameObject);
     }
 

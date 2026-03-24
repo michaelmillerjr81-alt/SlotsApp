@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using TMPro;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem.UI;
 
 /// <summary>
 /// Builds the LobbyScene and a reusable GameCard prefab from scratch.
@@ -47,10 +48,20 @@ public static class CreateLobbyScene
         services.AddComponent<PlatformManager>();
         services.AddComponent<PlatformNetworkManager>();
 
+        // ── Camera ────────────────────────────────────────────────────────
+        var camGO = new GameObject("Main Camera");
+        camGO.tag = "MainCamera";
+        var cam = camGO.AddComponent<Camera>();
+        cam.clearFlags = CameraClearFlags.SolidColor;
+        cam.backgroundColor = ColBg;
+        cam.orthographic = true;
+        cam.depth = -1;
+        camGO.AddComponent<AudioListener>();
+
         // ── Event System ──────────────────────────────────────────────────
         var es = new GameObject("EventSystem");
         es.AddComponent<EventSystem>();
-        es.AddComponent<StandaloneInputModule>();
+        es.AddComponent<InputSystemUIInputModule>();
 
         // ── Canvas ────────────────────────────────────────────────────────
         var canvasGO = new GameObject("Canvas");
@@ -133,7 +144,7 @@ public static class CreateLobbyScene
         sectionLabelTMP.rectTransform.sizeDelta        = new Vector2(400f, 28f);
 
         var sectionSep = AddTMP(canvasGO.transform, "SectionSep",
-                                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                                "- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -",
                                 font, 9f, ColSepLine, FontStyles.Normal, TextAlignmentOptions.Left);
         sectionSep.rectTransform.anchorMin        = new Vector2(0f, 1f);
         sectionSep.rectTransform.anchorMax        = new Vector2(1f, 1f);
@@ -156,8 +167,7 @@ public static class CreateLobbyScene
         // Viewport (masks the content)
         var viewportRT = MakeRT(scrollRT, "Viewport");
         FullStretch(viewportRT);
-        viewportRT.gameObject.AddComponent<Image>().color = new Color(0, 0, 0, 0); // invisible mask carrier
-        viewportRT.gameObject.AddComponent<Mask>().showMaskGraphic = false;
+        viewportRT.gameObject.AddComponent<RectMask2D>();
         scrollRect.viewport = viewportRT;
 
         // Content container (Grid Layout Group — cards snap into rows)
@@ -206,7 +216,7 @@ public static class CreateLobbyScene
         lc.statusText        = statusTMP;
         lc.logoutButton      = logoutBtnRT.GetComponent<Button>();
         lc.gameCardContainer = contentRT;
-        lc.gameCardPrefab    = cardPrefab;
+        // gameCardPrefab removed — cards are built in code at runtime
 
         // ── Save scene ────────────────────────────────────────────────────
         if (!AssetDatabase.IsValidFolder("Assets/Scenes"))

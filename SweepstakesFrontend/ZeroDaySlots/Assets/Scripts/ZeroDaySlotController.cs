@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 using TMPro;
 
 /**
@@ -68,6 +69,12 @@ public class ZeroDaySlotController : MonoBehaviour
 
     private void Start()
     {
+        if (PlatformManager.Instance == null || !PlatformManager.Instance.IsLoggedIn)
+        {
+            SceneManager.LoadScene("LoginScene");
+            return;
+        }
+
         if (spinButton != null) spinButton.onClick.AddListener(OnLocalSpinClicked);
         if (toggleCurrencyButton != null) toggleCurrencyButton.onClick.AddListener(OnToggleCurrencyClicked);
         if (increaseBetButton != null) increaseBetButton.onClick.AddListener(OnIncreaseBetClicked);

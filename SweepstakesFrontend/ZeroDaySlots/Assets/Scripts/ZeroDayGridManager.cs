@@ -69,7 +69,10 @@ public class ZeroDayGridManager : MonoBehaviour
                 string targetName = finalSymbols[cellIndex].Trim();
                 Sprite targetSprite = GetSpriteForSymbol(targetName);
                 if (targetSprite != null && gridCells[cellIndex] != null)
+                {
                     gridCells[cellIndex].sprite = targetSprite;
+                    gridCells[cellIndex].color  = Color.white;
+                }
             }
         }
 
@@ -94,7 +97,10 @@ public class ZeroDayGridManager : MonoBehaviour
                 {
                     Sprite s = GetSpriteForSymbol(symbols[cellIndex].Trim());
                     if (s != null && gridCells[cellIndex] != null)
+                    {
                         gridCells[cellIndex].sprite = s;
+                        gridCells[cellIndex].color  = Color.white;
+                    }
                 }
             }
         }
