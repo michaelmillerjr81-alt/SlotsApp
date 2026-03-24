@@ -79,7 +79,7 @@ public static class CreateLobbyScene
         headerBorder.anchoredPosition = Vector2.zero; headerBorder.sizeDelta = new Vector2(0f, 2f);
 
         // Casino name (left)
-        var casinoTMP = AddTMP(header, "CasinoTitle", "SCARLET SANDS",
+        var casinoTMP = AddTMP(header, "CasinoTitle", "VELVET JACKPOT",
                                font, 26f, ColGold, FontStyles.Bold, TextAlignmentOptions.Left);
         casinoTMP.rectTransform.anchorMin = new Vector2(0f, 0f);
         casinoTMP.rectTransform.anchorMax = new Vector2(0f, 1f);

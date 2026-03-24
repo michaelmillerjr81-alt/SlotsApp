@@ -89,7 +89,7 @@ public static class CreateLoginScene
         float y = 278f;
 
         // Casino logo / title
-        var logoTMP = AddTMP(panel, "LogoText", "SCARLET SANDS",
+        var logoTMP = AddTMP(panel, "LogoText", "VELVET JACKPOT",
                              font, 36f, ColGold, FontStyles.Bold, TextAlignmentOptions.Center);
         SetRect(logoTMP.rectTransform, 0f, y, 480f, 52f); y -= 42f;
 

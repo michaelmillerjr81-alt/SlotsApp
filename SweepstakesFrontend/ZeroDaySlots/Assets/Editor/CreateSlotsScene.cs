@@ -103,7 +103,7 @@ public static class CreateSlotsScene
         UnityEventTools.AddPersistentListener(backBtnRT.GetComponent<Button>().onClick, net.ReturnToLobby);
 
         // Title
-        var titleTMP = AddTMP(topBar, "TitleText", "SCARLET SANDS  SLOTS",
+        var titleTMP = AddTMP(topBar, "TitleText", "VELVET JACKPOT  SLOTS",
                               font, 24f, ColGold, FontStyles.Bold, TextAlignmentOptions.Center);
         titleTMP.rectTransform.anchorMin = new Vector2(0.5f, 0f);
         titleTMP.rectTransform.anchorMax = new Vector2(0.5f, 1f);
