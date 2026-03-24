@@ -3,17 +3,24 @@ using System.Collections;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
+using UnityEngine.SceneManagement;
 
 public class SweepstakesNetworkManager : MonoBehaviour
 {
     public ZeroDaySlotController slotController;
-    [Tooltip("Base URL of the backend server (no trailing slash)")]
-    public string serverBaseUrl = "http://localhost:3000";
-    [Tooltip("Must match the API_KEY environment variable set on the server")]
-    public string apiKey = "CHANGE_ME";
 
-    private string InitUrl => serverBaseUrl + "/api/init";
-    private string SpinUrl => serverBaseUrl + "/api/spin";
+    [Tooltip("Lobby scene to return to. Leave empty to disable the back button.")]
+    public string lobbySceneName = "LobbyScene";
+
+    // URLs and credentials come from PlatformManager singleton
+    private string InitUrl => PlatformManager.Instance.serverBaseUrl + "/api/init";
+    private string SpinUrl => PlatformManager.Instance.serverBaseUrl + "/api/spin";
+
+    public void ReturnToLobby()
+    {
+        if (!string.IsNullOrEmpty(lobbySceneName))
+            SceneManager.LoadScene(lobbySceneName);
+    }
 
     [Serializable]
     public class ProvablyFairData
@@ -77,12 +84,19 @@ public class SweepstakesNetworkManager : MonoBehaviour
         StartCoroutine(PostSpinRequest(jsonPayload));
     }
 
+    private void AddAuthHeaders(UnityWebRequest request)
+    {
+        request.SetRequestHeader("x-api-key", PlatformManager.Instance.apiKey);
+        if (PlatformManager.Instance.IsLoggedIn)
+            request.SetRequestHeader("Authorization", "Bearer " + PlatformManager.Instance.JwtToken);
+    }
+
     private IEnumerator GetInitRequest()
     {
         Debug.Log($"[NETWORK] Requesting initial board state from: {InitUrl}");
         using (UnityWebRequest request = UnityWebRequest.Get(InitUrl))
         {
-            request.SetRequestHeader("x-api-key", apiKey);
+            AddAuthHeaders(request);
             yield return request.SendWebRequest();
 
             if (request.result == UnityWebRequest.Result.Success)
@@ -109,7 +123,7 @@ public class SweepstakesNetworkManager : MonoBehaviour
             request.uploadHandler = new UploadHandlerRaw(bodyRaw);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
-            request.SetRequestHeader("x-api-key", apiKey);
+            AddAuthHeaders(request);
 
             yield return request.SendWebRequest();
 

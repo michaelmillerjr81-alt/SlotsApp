@@ -1,8 +1,10 @@
 # Node
 SweepstakesBackend/node_modules/
 SweepstakesBackend/balances.json
+SweepstakesBackend/users.json
 
 # Unity generated
+SweepstakesFrontend/ZeroDaySlots/.vs/
 SweepstakesFrontend/ZeroDaySlots/Library/
 SweepstakesFrontend/ZeroDaySlots/Temp/
 SweepstakesFrontend/ZeroDaySlots/Logs/

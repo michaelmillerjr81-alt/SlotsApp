@@ -3,266 +3,330 @@ const cors = require('cors');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- API KEY AUTHENTICATION ---
+// ---- ENV VALIDATION ----
 const API_KEY = process.env.API_KEY;
-if (!API_KEY) {
-    console.error('[FATAL] API_KEY environment variable is not set. Refusing to start.');
+const JWT_SECRET = process.env.JWT_SECRET;
+const PORT = process.env.PORT || 3000;
+
+if (!API_KEY || !JWT_SECRET) {
+    console.error('[FATAL] API_KEY and JWT_SECRET environment variables are required.');
     process.exit(1);
 }
 
-function requireApiKey(req, res, next) {
+// ---- API KEY MIDDLEWARE (all routes) ----
+app.use((req, res, next) => {
     const key = req.headers['x-api-key'];
     if (!key || key !== API_KEY) {
         return res.status(401).json({ success: false, error: 'UNAUTHORIZED' });
     }
     next();
-}
-app.use(requireApiKey);
+});
 
-// --- CASINO CONFIGURATION ---
-
-// PATCH: Expanded to a full AAA roster (8 Base Symbols, 1 Wild, 1 Scatter)
-const SYMBOLS = ["Wire", "Cable", "Fan", "Drive", "Battery", "RAM", "Microchip", "Skull", "Neon", "Seven"];
-
-// PATCH: Deep, granular Paytable for 8 base symbols
-const PAYTABLE = {
-    "Wire": { 3: 0.1, 4: 0.2, 5: 0.5 },      // Tier 1 (Lowest)
-    "Cable": { 3: 0.1, 4: 0.3, 5: 1.0 },     // Tier 2
-    "Fan": { 3: 0.2, 4: 0.4, 5: 1.2 },       // Tier 3
-    "Drive": { 3: 0.2, 4: 0.5, 5: 1.5 },     // Tier 4
-    "Battery": { 3: 0.5, 4: 1.0, 5: 2.0 },   // Tier 5
-    "RAM": { 3: 0.8, 4: 1.5, 5: 3.0 },       // Tier 6
-    "Microchip": { 3: 1.0, 4: 2.5, 5: 5.0 }, // Tier 7
-    "Skull": { 3: 2.0, 4: 5.0, 5: 15.0 },    // Tier 8 (Highest Base)
-};
-
-// Define the 12 winning lines for a 5x5 grid
-const LINES = [
-    [0, 1, 2, 3, 4], [5, 6, 7, 8, 9], [10, 11, 12, 13, 14], [15, 16, 17, 18, 19], [20, 21, 22, 23, 24], // Horizontal
-    [0, 5, 10, 15, 20], [1, 6, 11, 16, 21], [2, 7, 12, 17, 22], [3, 8, 13, 18, 23], [4, 9, 14, 19, 24], // Vertical
-    [0, 6, 12, 18, 24], [4, 8, 12, 16, 20] // Diagonal
-];
-
-// --- BALANCE PERSISTENCE ---
-const BALANCE_FILE = path.join(__dirname, 'balances.json');
-const DEFAULT_BALANCES = { GC: 10000, SC: 50 };
-
-function loadBalances() {
+// ---- JWT MIDDLEWARE (factory) ----
+function requireAuth(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) return res.status(401).json({ success: false, error: 'UNAUTHORIZED' });
     try {
-        if (fs.existsSync(BALANCE_FILE)) {
-            return JSON.parse(fs.readFileSync(BALANCE_FILE, 'utf8'));
+        req.user = jwt.verify(token, JWT_SECRET);
+        next();
+    } catch {
+        return res.status(401).json({ success: false, error: 'TOKEN_EXPIRED' });
+    }
+}
+
+// ---- USER DATABASE (JSON file) ----
+const USERS_FILE = path.join(__dirname, 'users.json');
+
+function loadUsers() {
+    try {
+        if (fs.existsSync(USERS_FILE)) {
+            return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
         }
     } catch (e) {
-        console.error('[WARN] Failed to load balances, using defaults:', e.message);
+        console.error('[WARN] Failed to load users DB:', e.message);
     }
-    return { ...DEFAULT_BALANCES };
+    return {};
 }
 
-function saveBalances() {
+function saveUsers(users) {
     try {
-        fs.writeFileSync(BALANCE_FILE, JSON.stringify(balances), 'utf8');
+        fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
     } catch (e) {
-        console.error('[WARN] Failed to persist balances:', e.message);
+        console.error('[WARN] Failed to save users DB:', e.message);
     }
 }
 
-let balances = loadBalances();
+// ---- GAME REGISTRY ----
+const GAMES = [
+    {
+        id: 'zero-day-slots',
+        name: 'Zero Day Slots',
+        sceneName: 'ZeroDaySlots',
+        description: '5x5 cyberpunk slots. 12 paylines, wilds, and scatter bonus.',
+        minBet: { GC: 100, SC: 5 },
+        maxBet: { GC: 10000, SC: 500 }
+    }
+];
 
-// --- PROVABLY FAIR ENGINE ---
+// ---- CASINO CONFIGURATION ----
+const SYMBOLS = ["Wire", "Cable", "Fan", "Drive", "Battery", "RAM", "Microchip", "Skull", "Neon", "Seven"];
 
+const PAYTABLE = {
+    "Wire":      { 3: 0.1,  4: 0.2,  5: 0.5  },
+    "Cable":     { 3: 0.1,  4: 0.3,  5: 1.0  },
+    "Fan":       { 3: 0.2,  4: 0.4,  5: 1.2  },
+    "Drive":     { 3: 0.2,  4: 0.5,  5: 1.5  },
+    "Battery":   { 3: 0.5,  4: 1.0,  5: 2.0  },
+    "RAM":       { 3: 0.8,  4: 1.5,  5: 3.0  },
+    "Microchip": { 3: 1.0,  4: 2.5,  5: 5.0  },
+    "Skull":     { 3: 2.0,  4: 5.0,  5: 15.0 },
+};
+
+const LINES = [
+    [0,1,2,3,4], [5,6,7,8,9], [10,11,12,13,14], [15,16,17,18,19], [20,21,22,23,24],
+    [0,5,10,15,20], [1,6,11,16,21], [2,7,12,17,22], [3,8,13,18,23], [4,9,14,19,24],
+    [0,6,12,18,24], [4,8,12,16,20]
+];
+
+const BET_LIMITS = { GC: { min: 100, max: 10000 }, SC: { min: 5, max: 500 } };
+const VALID_CURRENCIES = new Set(['GC', 'SC']);
+
+// ---- PROVABLY FAIR ENGINE ----
 function generateProvablyFairGrid(serverSeed, clientSeed, nonce) {
     const combinedData = `${serverSeed}:${clientSeed}:${nonce}`;
     const hash = crypto.createHash('sha256').update(combinedData).digest('hex');
-
     let grid = [];
-    // Generate 25 symbols based on the hash string
     for (let i = 0; i < 25; i++) {
-        // Take 2 characters from the hash, convert to hex integer (0 to 255)
         const hexSlice = hash.substring((i % 32) * 2, (i % 32) * 2 + 2);
-        const decimalValue = parseInt(hexSlice, 16);
-
-        // PATCH: 10-Symbol Volatility Weights (256 total values distributed)
-        let selectedSymbol = "Wire"; // Default fallback
-
-        if (decimalValue <= 44) {
-            selectedSymbol = "Wire";       // ~17.5% chance
-        } else if (decimalValue <= 89) {
-            selectedSymbol = "Cable";      // ~17.5% chance
-        } else if (decimalValue <= 129) {
-            selectedSymbol = "Fan";        // ~15.6% chance
-        } else if (decimalValue <= 164) {
-            selectedSymbol = "Drive";      // ~13.6% chance
-        } else if (decimalValue <= 194) {
-            selectedSymbol = "Battery";    // ~11.7% chance
-        } else if (decimalValue <= 214) {
-            selectedSymbol = "RAM";        // ~7.8% chance
-        } else if (decimalValue <= 226) {
-            selectedSymbol = "Microchip";  // ~4.7% chance
-        } else if (decimalValue <= 234) {
-            selectedSymbol = "Skull";      // ~3.1% chance
-        } else if (decimalValue <= 242) {
-            selectedSymbol = "Neon";       // ~3.1% chance (Wild)
-        } else {
-            selectedSymbol = "Seven";      // ~5.0% chance (Scatter)
-        }
-
-        grid.push(selectedSymbol);
+        const v = parseInt(hexSlice, 16);
+        let sym = "Wire";
+        if      (v <= 44)  sym = "Wire";
+        else if (v <= 89)  sym = "Cable";
+        else if (v <= 129) sym = "Fan";
+        else if (v <= 164) sym = "Drive";
+        else if (v <= 194) sym = "Battery";
+        else if (v <= 214) sym = "RAM";
+        else if (v <= 226) sym = "Microchip";
+        else if (v <= 234) sym = "Skull";
+        else if (v <= 242) sym = "Neon";
+        else               sym = "Seven";
+        grid.push(sym);
     }
-
     return { grid, hash };
 }
 
-// --- WIN EVALUATION ENGINE (PAYLINES + SCATTER TRIGGER) ---
-
+// ---- WIN EVALUATION ----
 function calculateWin(gridArray, betAmount) {
     let totalWin = 0;
-    let scatterCount = 0;
+    let scatterCount = gridArray.filter(s => s === "Seven").length;
 
-    // 1. Count Scatters anywhere on the board
-    gridArray.forEach(symbol => {
-        if (symbol === "Seven") scatterCount++;
-    });
-
-    console.log(`[EVALUATION] Scatters detected: ${scatterCount}`);
-
-    // 2. Evaluate all predefined Lines (Strict Left-to-Right)
-    LINES.forEach((line, lineIndex) => {
-        const lineSymbols = line.map(index => gridArray[index]);
-        let highestLineWin = 0;
-
-        let currentStreak = 0;
-        let targetSymbol = null;
+    LINES.forEach(line => {
+        const lineSymbols = line.map(i => gridArray[i]);
+        let streak = 0;
+        let target = null;
 
         for (let j = 0; j < 5; j++) {
             const sym = lineSymbols[j];
-            if (sym === "Seven") break; // Scatters do not form line wins
-
-            // First non-wild symbol sets the target for this streak
-            if (targetSymbol === null && sym !== "Neon") {
-                targetSymbol = sym;
-            }
-
-            // Streak continues if it matches the target, or is a Wild, or if we are starting with Wilds
-            if (sym === targetSymbol || sym === "Neon" || targetSymbol === null) {
-                currentStreak++;
-            } else {
-                break; // Left-to-right chain broken
-            }
+            if (sym === "Seven") break;
+            if (target === null && sym !== "Neon") target = sym;
+            if (sym === target || sym === "Neon" || target === null) streak++;
+            else break;
         }
 
-        // If the entire streak is Wilds ("Neon"), pay as the highest symbol ("Skull")
-        const symbolToPay = targetSymbol || "Skull";
-
-        // Check against paytable
-        if (currentStreak >= 3 && PAYTABLE[symbolToPay] && PAYTABLE[symbolToPay][currentStreak]) {
-            highestLineWin = Math.floor(betAmount * PAYTABLE[symbolToPay][currentStreak]);
-        }
-
-        if (highestLineWin > 0) {
-            totalWin += highestLineWin;
-            console.log(`[WIN DETECTED] Line pays +${highestLineWin}`);
+        const symbolToPay = target || "Skull";
+        if (streak >= 3 && PAYTABLE[symbolToPay]?.[streak]) {
+            totalWin += Math.floor(betAmount * PAYTABLE[symbolToPay][streak]);
         }
     });
 
-    // 3. Scatter Bonus Trigger Payout
     if (scatterCount >= 5) {
-        const scatterPayout = betAmount * 10;
-        totalWin += scatterPayout;
-        console.log(`[SCATTER HIT] 5+ Sevens = Bonus Exploit Triggered (+${scatterPayout})`);
+        totalWin += betAmount * 10;
     }
 
     return totalWin;
 }
 
-// --- PROVABLY FAIR: Pre-committed server seed for next spin ---
-// Server reveals its seed after the spin so the client can verify the outcome.
-// The commitment (hash of server seed) is sent before the spin.
-let pendingServerSeed = crypto.randomBytes(32).toString('hex');
+// ---- AUTH ROUTES ----
 
-function getServerSeedCommitment() {
-    return crypto.createHash('sha256').update(pendingServerSeed).digest('hex');
-}
+// POST /api/auth/register
+app.post('/api/auth/register', async (req, res) => {
+    const { username, password } = req.body;
 
-// --- INPUT VALIDATION ---
-const VALID_CURRENCIES = new Set(['GC', 'SC']);
-const BET_LIMITS = { GC: { min: 1, max: 5000 }, SC: { min: 1, max: 25 } };
-
-function validateSpinInput(currencyType, betAmount) {
-    if (!VALID_CURRENCIES.has(currencyType)) {
-        return 'INVALID_CURRENCY';
+    if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+        return res.status(400).json({ success: false, error: 'INVALID_USERNAME' });
     }
-    if (typeof betAmount !== 'number' || !Number.isInteger(betAmount) || betAmount < BET_LIMITS[currencyType].min || betAmount > BET_LIMITS[currencyType].max) {
-        return 'INVALID_BET';
+    if (!password || typeof password !== 'string' || password.length < 8) {
+        return res.status(400).json({ success: false, error: 'WEAK_PASSWORD' });
     }
-    return null;
-}
 
-// --- API ENDPOINTS ---
+    const users = loadUsers();
+    if (users[username.toLowerCase()]) {
+        return res.status(409).json({ success: false, error: 'USERNAME_TAKEN' });
+    }
 
-app.get('/api/init', (req, res) => {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const userKey = username.toLowerCase();
+    users[userKey] = {
+        username,
+        passwordHash,
+        gcBalance: 10000,
+        scBalance: 50,
+        pendingServerSeed: crypto.randomBytes(32).toString('hex'),
+        createdAt: Date.now()
+    };
+    saveUsers(users);
+
+    const token = jwt.sign({ username: userKey }, JWT_SECRET, { expiresIn: '24h' });
+    console.log(`[AUTH] New account registered: ${username}`);
+
+    res.json({
+        success: true,
+        token,
+        username: users[userKey].username,
+        gcBalance: users[userKey].gcBalance,
+        scBalance: users[userKey].scBalance
+    });
+});
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ success: false, error: 'MISSING_CREDENTIALS' });
+    }
+
+    const users = loadUsers();
+    const userKey = username.toLowerCase();
+    const user = users[userKey];
+
+    if (!user) {
+        return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS' });
+    }
+
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) {
+        return res.status(401).json({ success: false, error: 'INVALID_CREDENTIALS' });
+    }
+
+    const token = jwt.sign({ username: userKey }, JWT_SECRET, { expiresIn: '24h' });
+    console.log(`[AUTH] Login: ${user.username}`);
+
+    res.json({
+        success: true,
+        token,
+        username: user.username,
+        gcBalance: user.gcBalance,
+        scBalance: user.scBalance
+    });
+});
+
+// ---- PLATFORM ROUTES ----
+
+// GET /api/games
+app.get('/api/games', requireAuth, (req, res) => {
+    res.json({ success: true, games: GAMES });
+});
+
+// GET /api/player
+app.get('/api/player', requireAuth, (req, res) => {
+    const users = loadUsers();
+    const user = users[req.user.username];
+    if (!user) return res.status(404).json({ success: false, error: 'USER_NOT_FOUND' });
+
+    res.json({
+        success: true,
+        username: user.username,
+        gcBalance: user.gcBalance,
+        scBalance: user.scBalance
+    });
+});
+
+// ---- GAME ROUTES ----
+
+// GET /api/init
+app.get('/api/init', requireAuth, (req, res) => {
+    const users = loadUsers();
+    const user = users[req.user.username];
+    if (!user) return res.status(404).json({ success: false, error: 'USER_NOT_FOUND' });
+
     const serverSeed = crypto.randomBytes(32).toString('hex');
     const nonce = crypto.randomBytes(4).readUInt32BE(0);
     const { grid } = generateProvablyFairGrid(serverSeed, "init_boot_sequence", nonce);
 
+    const commitment = crypto.createHash('sha256').update(user.pendingServerSeed).digest('hex');
+
     res.json({
         success: true,
         gridData: grid.join(','),
-        balances: balances,
-        nextServerSeedHash: getServerSeedCommitment()
+        balances: { GC: user.gcBalance, SC: user.scBalance },
+        nextServerSeedHash: commitment
     });
-    console.log(`[SYSTEM] Initial board state sent to client.`);
 });
 
-app.post('/api/spin', (req, res) => {
+// POST /api/spin
+app.post('/api/spin', requireAuth, (req, res) => {
     const { currencyType, betAmount, clientSeed } = req.body;
 
-    const validationError = validateSpinInput(currencyType, betAmount);
-    if (validationError) {
-        return res.status(400).json({ success: false, error: validationError });
+    if (!VALID_CURRENCIES.has(currencyType)) {
+        return res.status(400).json({ success: false, error: 'INVALID_CURRENCY' });
     }
-
+    if (typeof betAmount !== 'number' || !Number.isInteger(betAmount) ||
+        betAmount < BET_LIMITS[currencyType].min || betAmount > BET_LIMITS[currencyType].max) {
+        return res.status(400).json({ success: false, error: 'INVALID_BET' });
+    }
     if (!clientSeed || typeof clientSeed !== 'string' || clientSeed.length < 8 || clientSeed.length > 128) {
         return res.status(400).json({ success: false, error: 'INVALID_CLIENT_SEED' });
     }
 
-    if (balances[currencyType] < betAmount) {
+    const users = loadUsers();
+    const user = users[req.user.username];
+    if (!user) return res.status(404).json({ success: false, error: 'USER_NOT_FOUND' });
+
+    const balanceKey = currencyType === 'GC' ? 'gcBalance' : 'scBalance';
+    if (user[balanceKey] < betAmount) {
         return res.status(402).json({ success: false, error: 'INSUFFICIENT_FUNDS' });
     }
 
     // Use and rotate the pre-committed server seed
-    const serverSeed = pendingServerSeed;
-    pendingServerSeed = crypto.randomBytes(32).toString('hex');
+    const serverSeed = user.pendingServerSeed;
+    user.pendingServerSeed = crypto.randomBytes(32).toString('hex');
 
-    balances[currencyType] -= betAmount;
+    user[balanceKey] -= betAmount;
 
     const nonce = crypto.randomBytes(4).readUInt32BE(0);
     const { grid, hash } = generateProvablyFairGrid(serverSeed, clientSeed, nonce);
 
     const winAmount = calculateWin(grid, betAmount);
-    balances[currencyType] += winAmount;
-    saveBalances();
+    user[balanceKey] += winAmount;
+
+    saveUsers(users);
+
+    const commitment = crypto.createHash('sha256').update(user.pendingServerSeed).digest('hex');
+
+    console.log(`[SPIN] ${user.username} | Bet: ${betAmount} ${currencyType} | Won: ${winAmount} | Balance: ${user[balanceKey]}`);
 
     res.json({
         success: true,
-        currencyType: currencyType,
-        betAmount: betAmount,
-        winAmount: winAmount,
-        newBalance: balances[currencyType],
+        currencyType,
+        betAmount,
+        winAmount,
+        newBalance: user[balanceKey],
         gridData: grid.join(','),
         provablyFair: { hash, serverSeed, clientSeed, nonce },
-        nextServerSeedHash: getServerSeedCommitment()
+        nextServerSeedHash: commitment
     });
-
-    console.log(`[TRANSACTION] Bet: ${betAmount} | Won: ${winAmount} | New Balance: ${balances[currencyType]} ${currencyType}`);
 });
 
-const PORT = 3000;
+// ---- START ----
 app.listen(PORT, () => {
-    console.log(`[SYSTEM] Zero-Day Node.js Server initialized on port ${PORT}`);
-    console.log(`[SYSTEM] Awaiting WebGL Sweepstakes connections...`);
+    console.log(`[SYSTEM] ZeroDay Platform API running on port ${PORT}`);
 });
