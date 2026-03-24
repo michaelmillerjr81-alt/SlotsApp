@@ -6,8 +6,8 @@ using TMPro;
 
 /**
  * ZeroDaySlotController
- * Industry-standard UI and Game State manager.
- * UPGRADE: Contains the Sequential Reel Engine, Scatter Anticipation, and Balance UI sync.
+ * UI and game-state manager with tiered win effects, deceleration, dampened shake,
+ * screen flash, and balance roll-up animation.
  */
 public class ZeroDaySlotController : MonoBehaviour
 {
@@ -31,12 +31,20 @@ public class ZeroDaySlotController : MonoBehaviour
     public Transform screenShakeContainer;
     public Image backgroundImage;
     public ParticleSystem winParticles;
+    [Tooltip("Optional: a full-screen white Image (alpha 0) used for win flash. Set raycast target OFF.")]
+    public Image winFlashImage;
 
-    [Header("Shake & Glitch Settings")]
-    public float shakeDuration = 0.4f;
-    public float shakePositionalMagnitude = 15f;
+    [Header("Shake Settings")]
+    public float shakeDuration = 0.45f;
+    public float shakePositionalMagnitude = 14f;
     public float shakeRotationalMagnitude = 2f;
+
+    [Header("Button Settings")]
     public float buttonPulseSpeed = 0.1f;
+
+    [Header("Win Tier Thresholds (multiplier of bet)")]
+    public float bigWinMultiplier = 3f;
+    public float jackpotMultiplier = 10f;
 
     [Header("Sweepstakes Settings")]
     public string currentCurrency = "GC";
@@ -53,6 +61,9 @@ public class ZeroDaySlotController : MonoBehaviour
     private int maxBetSC = 500;
     private int minBetSC = 5;
 
+    private Coroutine balanceRollCoroutine;
+    private Coroutine statusFlashCoroutine;
+
     public event Action onSpinComplete;
 
     private void Start()
@@ -63,29 +74,27 @@ public class ZeroDaySlotController : MonoBehaviour
         if (decreaseBetButton != null) decreaseBetButton.onClick.AddListener(OnDecreaseBetClicked);
 
         if (bonusGamePanel != null) bonusGamePanel.SetActive(false);
+        if (winFlashImage != null) winFlashImage.color = new Color(1, 1, 1, 0);
 
         UpdateCurrencyUI();
-        UpdateStatusText("SYSTEM BOOTING. CONNECTING TO SERVER...");
+        UpdateStatusText("SYSTEM BOOTING. CONNECTING TO SERVER...", Color.cyan);
 
         if (networkManager != null)
-        {
             networkManager.RequestInit();
-        }
     }
+
+    // ---- Bet Controls ----
 
     private void OnIncreaseBetClicked()
     {
         if (increaseBetButton != null) StartCoroutine(PulseButtonRoutine(increaseBetButton.transform));
-
         if (currentCurrency == "GC")
         {
-            currentBetAmount += betStepGC;
-            if (currentBetAmount > maxBetGC) currentBetAmount = maxBetGC;
+            currentBetAmount = Mathf.Min(currentBetAmount + betStepGC, maxBetGC);
         }
         else
         {
-            currentBetAmount += betStepSC;
-            if (currentBetAmount > maxBetSC) currentBetAmount = maxBetSC;
+            currentBetAmount = Mathf.Min(currentBetAmount + betStepSC, maxBetSC);
         }
         UpdateCurrencyUI();
     }
@@ -93,16 +102,13 @@ public class ZeroDaySlotController : MonoBehaviour
     private void OnDecreaseBetClicked()
     {
         if (decreaseBetButton != null) StartCoroutine(PulseButtonRoutine(decreaseBetButton.transform));
-
         if (currentCurrency == "GC")
         {
-            currentBetAmount -= betStepGC;
-            if (currentBetAmount < minBetGC) currentBetAmount = minBetGC;
+            currentBetAmount = Mathf.Max(currentBetAmount - betStepGC, minBetGC);
         }
         else
         {
-            currentBetAmount -= betStepSC;
-            if (currentBetAmount < minBetSC) currentBetAmount = minBetSC;
+            currentBetAmount = Mathf.Max(currentBetAmount - betStepSC, minBetSC);
         }
         UpdateCurrencyUI();
     }
@@ -110,13 +116,13 @@ public class ZeroDaySlotController : MonoBehaviour
     private void OnToggleCurrencyClicked()
     {
         if (toggleCurrencyButton != null) StartCoroutine(PulseButtonRoutine(toggleCurrencyButton.transform));
-
         currentCurrency = (currentCurrency == "GC") ? "SC" : "GC";
         currentBetAmount = (currentCurrency == "GC") ? minBetGC : minBetSC;
-
         UpdateCurrencyUI();
-        UpdateStatusText($"CURRENCY SWITCHED. NOW WAGERING {currentCurrency}.");
+        UpdateStatusText($"CURRENCY SWITCHED. NOW WAGERING {currentCurrency}.", Color.cyan);
     }
+
+    // ---- UI Updates ----
 
     private void UpdateCurrencyUI()
     {
@@ -125,7 +131,11 @@ public class ZeroDaySlotController : MonoBehaviour
             currencyModeText.text = $"MODE: {currentCurrency}\nBET: {currentBetAmount}";
             currencyModeText.color = (currentCurrency == "GC") ? Color.yellow : Color.cyan;
         }
+        RefreshBalanceDisplay();
+    }
 
+    private void RefreshBalanceDisplay()
+    {
         if (balanceText != null)
         {
             int displayBalance = (currentCurrency == "GC") ? currentGCBalance : currentSCBalance;
@@ -133,17 +143,30 @@ public class ZeroDaySlotController : MonoBehaviour
         }
     }
 
+    private void UpdateStatusText(string message, Color color)
+    {
+        if (statusText != null)
+        {
+            statusText.text = message;
+            statusText.color = color;
+        }
+        Debug.Log($"[SLOT CONTROLLER] {message}");
+    }
+
+    private void UpdateStatusText(string message) => UpdateStatusText(message, Color.white);
+
+    // ---- Spin Flow ----
+
     private void OnLocalSpinClicked()
     {
         int currentBalance = (currentCurrency == "GC") ? currentGCBalance : currentSCBalance;
         if (currentBetAmount > currentBalance)
         {
-            UpdateStatusText("ERROR: INSUFFICIENT FUNDS. PLEASE LOWER WAGER.");
+            UpdateStatusText("ERROR: INSUFFICIENT FUNDS. PLEASE LOWER WAGER.", Color.red);
             return;
         }
 
         if (spinButton != null) StartCoroutine(PulseButtonRoutine(spinButton.transform));
-
         SetButtonsInteractable(false);
 
         if (networkManager != null)
@@ -154,7 +177,7 @@ public class ZeroDaySlotController : MonoBehaviour
         else
         {
             Debug.LogError("[NETWORK ERROR] SweepstakesNetworkManager is missing!");
-            UpdateStatusText("ERROR: NETWORK DISCONNECTED.");
+            UpdateStatusText("ERROR: NETWORK DISCONNECTED.", Color.red);
             SetButtonsInteractable(true);
         }
     }
@@ -169,13 +192,13 @@ public class ZeroDaySlotController : MonoBehaviour
 
     public void BeginInfiniteSpin()
     {
-        UpdateStatusText($"TRANSMITTING {currentBetAmount} {currentCurrency}... REELS SPINNING.");
+        UpdateStatusText($"TRANSMITTING {currentBetAmount} {currentCurrency}... REELS SPINNING.", Color.white);
         if (gridManager != null) gridManager.BeginDigitalSpin();
     }
 
     public void RejectSpin(string errorMessage)
     {
-        UpdateStatusText($"TRANSMISSION FAILED: {errorMessage}");
+        UpdateStatusText($"TRANSMISSION FAILED: {errorMessage}", Color.red);
         SetButtonsInteractable(true);
         if (gridManager != null) gridManager.StopAllCoroutines();
     }
@@ -187,78 +210,73 @@ public class ZeroDaySlotController : MonoBehaviour
         UpdateCurrencyUI();
 
         if (gridManager != null) gridManager.UpdateGridVisuals(gridData);
-        UpdateStatusText("SYSTEM READY. AWAITING WAGER.");
+        UpdateStatusText("SYSTEM READY. AWAITING WAGER.", Color.green);
     }
 
     public void ResolveSpin(string gridData, int winAmount, int newBalance, int[] winningLines)
     {
+        int oldBalance = (currentCurrency == "GC") ? currentGCBalance : currentSCBalance;
+
         if (currentCurrency == "GC") currentGCBalance = newBalance;
         else currentSCBalance = newBalance;
 
-        UpdateCurrencyUI();
+        // Roll up balance during reel sequence
+        if (balanceRollCoroutine != null) StopCoroutine(balanceRollCoroutine);
+        balanceRollCoroutine = StartCoroutine(RollUpBalanceRoutine(oldBalance, newBalance, 1.5f));
 
         StartCoroutine(AnimateReelSequence(gridData, winAmount));
     }
 
-    // PATCH: Sequential Reel Engine with Scatter Suspense Delay
+    // ---- Reel Sequence ----
+
     private IEnumerator AnimateReelSequence(string gridData, int winAmount)
     {
         string[] finalSymbols = gridData.Split(',');
         int scatterCountSoFar = 0;
         int totalScattersNeeded = 5;
 
-        // Sequence through the 5 columns (Reel 0 through 4)
         for (int reel = 0; reel < 5; reel++)
         {
-            // SUSPENSE CHECK: If we already have 3+ Scatters, and we are spinning reels 4 or 5, slow down!
             bool isSuspenseReel = (scatterCountSoFar >= 3 && reel >= 3);
 
             if (isSuspenseReel)
             {
-                UpdateStatusText("CRITICAL: SCATTER ANOMALY DETECTED... BRACE FOR EXPLOIT!");
-                if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine());
-
-                // Massive suspense delay (2.5 seconds) for the final reels
+                UpdateStatusText("CRITICAL: SCATTER ANOMALY DETECTED... BRACE FOR EXPLOIT!", Color.magenta);
+                if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine(shakeDuration, 1.0f));
+                if (gridManager != null) gridManager.DecelerateReel(reel);
                 yield return new WaitForSeconds(2.5f);
             }
             else
             {
-                // Normal "Thud" delay (0.3 seconds)
+                // Decelerate as we approach the stop
+                if (gridManager != null) gridManager.DecelerateReel(reel);
                 yield return new WaitForSeconds(0.3f);
             }
 
-            // Stop this specific vertical column
             if (gridManager != null) gridManager.StopReel(reel, finalSymbols);
 
-            // Scan the newly stopped column to see if a Scatter landed
+            // Count scatters in this column
             for (int row = 0; row < 5; row++)
             {
                 int cellIndex = (row * 5) + reel;
                 if (cellIndex < finalSymbols.Length && finalSymbols[cellIndex].Trim() == "Seven")
-                {
                     scatterCountSoFar++;
-                }
             }
         }
 
-        // Slight pause for effect after the final reel lands
         yield return new WaitForSeconds(0.5f);
 
-        // VFX TRIGGER: Did we hit a Payline?
+        // Resolve win effects
         if (winAmount > 0)
         {
-            UpdateStatusText($"WINNER! PAYOUT: {winAmount} {currentCurrency}");
-
-            if (winParticles != null) winParticles.Play();
-            if (screenShakeContainer != null) StartCoroutine(ShakeUIRoutine());
-            if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine());
+            float multiplier = (float)winAmount / currentBetAmount;
+            PlayWinEffects(winAmount, multiplier);
         }
         else
         {
-            UpdateStatusText($"NO WIN.");
+            UpdateStatusText("NO WIN.", new Color(0.6f, 0.6f, 0.6f));
         }
 
-        // BONUS TRIGGER: Did we hit 5 Scatters?
         if (scatterCountSoFar >= totalScattersNeeded)
         {
             TriggerBonusMiniGame();
@@ -270,21 +288,56 @@ public class ZeroDaySlotController : MonoBehaviour
         }
     }
 
-    // --- BONUS GAME LOGIC ---
+    private void PlayWinEffects(int winAmount, float multiplier)
+    {
+        if (multiplier >= jackpotMultiplier)
+        {
+            // Jackpot
+            if (statusFlashCoroutine != null) StopCoroutine(statusFlashCoroutine);
+            statusFlashCoroutine = StartCoroutine(JackpotStatusRoutine(winAmount));
+
+            if (winParticles != null) winParticles.Play();
+            if (screenShakeContainer != null) StartCoroutine(ShakeUIRoutine(shakeDuration * 1.8f, shakePositionalMagnitude * 2f, shakeRotationalMagnitude * 2f));
+            if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine(shakeDuration * 1.5f, 1.0f));
+            if (winFlashImage != null) StartCoroutine(FlashScreenRoutine(0.85f, 0.5f));
+        }
+        else if (multiplier >= bigWinMultiplier)
+        {
+            // Big win
+            UpdateStatusText($"BIG WIN!  +{winAmount} {currentCurrency}", Color.yellow);
+
+            if (winParticles != null) winParticles.Play();
+            if (screenShakeContainer != null) StartCoroutine(ShakeUIRoutine(shakeDuration * 1.3f, shakePositionalMagnitude * 1.5f, shakeRotationalMagnitude * 1.5f));
+            if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine(shakeDuration * 1.1f, 0.7f));
+            if (winFlashImage != null) StartCoroutine(FlashScreenRoutine(0.55f, 0.35f));
+        }
+        else
+        {
+            // Small win
+            UpdateStatusText($"WIN!  +{winAmount} {currentCurrency}", Color.green);
+
+            if (winParticles != null) winParticles.Play();
+            if (screenShakeContainer != null) StartCoroutine(ShakeUIRoutine(shakeDuration, shakePositionalMagnitude, shakeRotationalMagnitude));
+            if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine(shakeDuration * 0.7f, 0.4f));
+            if (winFlashImage != null) StartCoroutine(FlashScreenRoutine(0.3f, 0.25f));
+        }
+    }
+
+    // ---- Bonus Game ----
 
     private void TriggerBonusMiniGame()
     {
-        UpdateStatusText("CRITICAL: 5 SCATTERS DETECTED. INITIATING ZERO-DAY EXPLOIT.");
+        UpdateStatusText("CRITICAL: 5 SCATTERS DETECTED. INITIATING ZERO-DAY EXPLOIT.", Color.magenta);
         Debug.Log("[BONUS ENGINE] 5+ Scatters hit! Transitioning to Mini-Game...");
 
-        if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine());
+        if (backgroundImage != null) StartCoroutine(GlitchBackgroundRoutine(shakeDuration, 1.0f));
         if (bonusGamePanel != null) bonusGamePanel.SetActive(true);
     }
 
     public void EndBonusMiniGame()
     {
         Debug.Log("[BONUS ENGINE] Exploit Complete. Returning to main terminal.");
-        UpdateStatusText("SYSTEM NORMALIZED. AWAITING WAGER.");
+        UpdateStatusText("SYSTEM NORMALIZED. AWAITING WAGER.", Color.green);
 
         if (bonusGamePanel != null) bonusGamePanel.SetActive(false);
 
@@ -292,7 +345,7 @@ public class ZeroDaySlotController : MonoBehaviour
         onSpinComplete?.Invoke();
     }
 
-    // --- VFX COROUTINES ---
+    // ---- VFX Coroutines ----
 
     private IEnumerator PulseButtonRoutine(Transform btnTransform)
     {
@@ -306,7 +359,6 @@ public class ZeroDaySlotController : MonoBehaviour
             elapsed += Time.deltaTime;
             yield return null;
         }
-
         elapsed = 0f;
         while (elapsed < buttonPulseSpeed)
         {
@@ -314,52 +366,25 @@ public class ZeroDaySlotController : MonoBehaviour
             elapsed += Time.deltaTime;
             yield return null;
         }
-
         btnTransform.localScale = originalScale;
     }
 
-    private IEnumerator GlitchBackgroundRoutine()
-    {
-        Color originalColor = backgroundImage.color;
-        float elapsed = 0.0f;
-
-        while (elapsed < shakeDuration)
-        {
-            int randomChoice = UnityEngine.Random.Range(0, 4);
-            Color glitchColor = originalColor;
-
-            switch (randomChoice)
-            {
-                case 0: glitchColor = Color.cyan; break;
-                case 1: glitchColor = Color.magenta; break;
-                case 2: glitchColor = Color.white; break;
-                case 3: glitchColor = new Color(0, 0, 0, 0.5f); break;
-            }
-
-            backgroundImage.color = glitchColor;
-            yield return new WaitForSeconds(0.05f);
-
-            backgroundImage.color = originalColor;
-            yield return new WaitForSeconds(0.05f);
-
-            elapsed += 0.1f;
-        }
-
-        backgroundImage.color = originalColor;
-    }
-
-    private IEnumerator ShakeUIRoutine()
+    // Dampened shake — magnitude decays over time for a natural feel
+    private IEnumerator ShakeUIRoutine(float duration, float posMagnitude, float rotMagnitude)
     {
         Vector3 originalPos = screenShakeContainer.localPosition;
         Quaternion originalRot = screenShakeContainer.localRotation;
 
-        float elapsed = 0.0f;
-
-        while (elapsed < shakeDuration)
+        float elapsed = 0f;
+        while (elapsed < duration)
         {
-            float x = originalPos.x + UnityEngine.Random.Range(-1f, 1f) * shakePositionalMagnitude;
-            float y = originalPos.y + UnityEngine.Random.Range(-1f, 1f) * shakePositionalMagnitude;
-            float zTilt = UnityEngine.Random.Range(-1f, 1f) * shakeRotationalMagnitude;
+            float decay = 1f - (elapsed / duration);  // 1 → 0 linear decay
+            float currentMag = posMagnitude * decay;
+            float currentRot = rotMagnitude * decay;
+
+            float x = originalPos.x + UnityEngine.Random.Range(-1f, 1f) * currentMag;
+            float y = originalPos.y + UnityEngine.Random.Range(-1f, 1f) * currentMag;
+            float zTilt = UnityEngine.Random.Range(-1f, 1f) * currentRot;
 
             screenShakeContainer.localPosition = new Vector3(x, y, originalPos.z);
             screenShakeContainer.localRotation = originalRot * Quaternion.Euler(0, 0, zTilt);
@@ -372,11 +397,107 @@ public class ZeroDaySlotController : MonoBehaviour
         screenShakeContainer.localRotation = originalRot;
     }
 
-    private void UpdateStatusText(string message)
+    // Glitch background with adjustable intensity (0..1)
+    private IEnumerator GlitchBackgroundRoutine(float duration, float intensity)
     {
-        if (statusText != null) statusText.text = message;
-        Debug.Log($"[SLOT CONTROLLER] {message}");
+        Color originalColor = backgroundImage.color;
+        float elapsed = 0f;
+
+        Color[] glitchColors = {
+            Color.cyan, Color.magenta, Color.white,
+            new Color(0f, 1f, 0.5f), new Color(1f, 0.3f, 0f),
+            new Color(0f, 0f, 0f, 0.6f)
+        };
+
+        while (elapsed < duration)
+        {
+            // Higher intensity = more frequent, more saturated hits
+            if (UnityEngine.Random.value < intensity)
+            {
+                Color glitch = glitchColors[UnityEngine.Random.Range(0, glitchColors.Length)];
+                backgroundImage.color = Color.Lerp(originalColor, glitch, intensity * 0.85f);
+                yield return new WaitForSeconds(0.04f);
+                backgroundImage.color = originalColor;
+                yield return new WaitForSeconds(0.03f);
+            }
+            else
+            {
+                yield return new WaitForSeconds(0.04f);
+            }
+            elapsed += 0.07f;
+        }
+
+        backgroundImage.color = originalColor;
     }
+
+    // Brief full-screen flash (requires winFlashImage assigned in Inspector)
+    private IEnumerator FlashScreenRoutine(float peakAlpha, float duration)
+    {
+        if (winFlashImage == null) yield break;
+
+        float halfDur = duration * 0.4f;
+        float elapsed = 0f;
+
+        // Fade in
+        while (elapsed < halfDur)
+        {
+            float a = Mathf.Lerp(0f, peakAlpha, elapsed / halfDur);
+            winFlashImage.color = new Color(1, 1, 1, a);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        // Fade out
+        elapsed = 0f;
+        float fadeOutDur = duration * 0.6f;
+        while (elapsed < fadeOutDur)
+        {
+            float a = Mathf.Lerp(peakAlpha, 0f, elapsed / fadeOutDur);
+            winFlashImage.color = new Color(1, 1, 1, a);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        winFlashImage.color = new Color(1, 1, 1, 0);
+    }
+
+    // Jackpot: cycles status text through neon colors
+    private IEnumerator JackpotStatusRoutine(int winAmount)
+    {
+        Color[] jackpotColors = { Color.yellow, Color.cyan, Color.magenta, Color.green, Color.white };
+        float elapsed = 0f;
+        float totalDuration = 2.5f;
+        int colorIndex = 0;
+
+        while (elapsed < totalDuration)
+        {
+            UpdateStatusText($"J A C K P O T !!   +{winAmount} {currentCurrency}", jackpotColors[colorIndex % jackpotColors.Length]);
+            colorIndex++;
+            yield return new WaitForSeconds(0.12f);
+            elapsed += 0.12f;
+        }
+
+        UpdateStatusText($"JACKPOT!  +{winAmount} {currentCurrency}", Color.yellow);
+    }
+
+    // Counts balance display from old to new value
+    private IEnumerator RollUpBalanceRoutine(int fromValue, int toValue, float duration)
+    {
+        float elapsed = 0f;
+        while (elapsed < duration)
+        {
+            float t = elapsed / duration;
+            t = 1f - (1f - t) * (1f - t); // ease out
+            int displayed = Mathf.RoundToInt(Mathf.Lerp(fromValue, toValue, t));
+            if (balanceText != null)
+                balanceText.text = $"BALANCE:\n{displayed} {currentCurrency}";
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        RefreshBalanceDisplay();
+    }
+
+    // ---- Cleanup ----
 
     private void OnDestroy()
     {
